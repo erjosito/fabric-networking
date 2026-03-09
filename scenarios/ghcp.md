@@ -620,13 +620,13 @@ flowchart LR
         STG[Azure Storage<br/>Public: Disabled]
     end
 
-    VM -- "Private Inbound" --> PE_IN
     PE_IN --> Workspace
+    VM -- "Private Inbound" --> PE_IN
     NB --> MPE_OUT
     MPE_OUT -- "Private Outbound" --> STG
 
     Internet((Public Internet))
-    Internet -. "❌ Blocked<br/>Inbound" .-> Fabric Tenant
+    Internet -. "❌ Blocked<br/>Inbound" .-> Workspace
     Internet -. "❌ Blocked<br/>Outbound" .-> STG
 
     style Internet fill:#fee,stroke:#c00
