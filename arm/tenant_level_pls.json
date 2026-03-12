@@ -1,0 +1,30 @@
+// You can deploy this with the following commands:
+// tenant_id=$(az account show --query tenantId -o tsv --only-show-errors)
+// rg=myResourceGroup
+// template_file="arm/tenant_level_pls.json"
+// pls_name=tenant-pls01
+// az deployment group create -g $rg --template-file $template_file --parameters pls_name=$pls_name tenant_id=$tenant_id
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "pls_name": {
+      "type": "string"
+    },
+    "tenant_id": {
+      "type": "string"
+    }
+  },
+  "resources": [
+      {
+          "type":"Microsoft.PowerBI/privateLinkServicesForPowerBI",
+          "apiVersion": "2020-06-01",
+          "name" : "[parameters('pls_name')]",
+          "location": "global",
+          "properties" : 
+          {
+               "tenantId": "[parameters('tenant_id')]"
+          }
+      }
+  ]
+}

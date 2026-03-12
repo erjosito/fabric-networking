@@ -223,7 +223,7 @@ if ($deploySessionHosts) {
                 name=$($hp.VmName) `
                 location=$Location `
                 subnetId=$($hp.SubnetId) `
-                vmSize='Standard_D2s_v5' `
+                vmSize='Standard_D2als_v6' `
                 adminUsername='azureuser' `
                 adminPassword=$vmPwd `
                 hostPoolName=$($hp.HpName) `
