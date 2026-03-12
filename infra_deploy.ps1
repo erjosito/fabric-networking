@@ -33,13 +33,13 @@
     Private Endpoints. Requires "Azure Private Link" to be enabled in Fabric
     Admin > Tenant Settings first.
 
-.PARAMETER DeploySessionHosts
-    Deploy AVD session host VMs. Use on first deploy. Omit on re-deploys to
-    avoid re-running the DSC extension on already-registered hosts.
+.PARAMETER SkipSessionHosts
+    Skip deploying AVD session host VMs. Use on re-deploys to avoid
+    re-running the DSC extension on already-registered hosts.
 
 .EXAMPLE
-    .\infra_deploy.ps1 -DeploySessionHosts
-    .\infra_deploy.ps1 -ResourceGroup "my-rg" -Location "northeurope" -DeploySessionHosts
+    .\infra_deploy.ps1
+    .\infra_deploy.ps1 -ResourceGroup "my-rg" -Location "northeurope" -SkipSessionHosts
     .\infra_deploy.ps1 -DeployFabricPrivateLink
 #>
 
@@ -52,7 +52,7 @@ param(
     [string]$SqlEntraAdminObjectId,
     [string]$SqlEntraAdminName,
     [switch]$DeployFabricPrivateLink,
-    [switch]$DeploySessionHosts
+    [switch]$SkipSessionHosts
 )
 
 Set-StrictMode -Version Latest
@@ -60,8 +60,10 @@ $ErrorActionPreference = "Stop"
 
 # ── Prompt for VM password only when deploying session hosts ─────────────────────
 
+$deploySessionHosts = -not $SkipSessionHosts
+
 $vmPwd = ""
-if ($DeploySessionHosts) {
+if ($deploySessionHosts) {
     if ($null -eq $VmAdminPassword -or $VmAdminPassword.Length -eq 0) {
         $VmAdminPassword = Read-Host -Prompt "Enter VM admin password" -AsSecureString
     }
@@ -113,7 +115,7 @@ $providers = @(
     "Microsoft.Insights"
 )
 
-Write-Host "[1/5] Registering resource providers..." -ForegroundColor Yellow
+Write-Host "[1/7] Registering resource providers..." -ForegroundColor Yellow
 foreach ($p in $providers) {
     az provider register --namespace $p --only-show-errors | Out-Null
 }
@@ -121,13 +123,13 @@ Write-Host "      Providers registered (propagation may take a few minutes)." -F
 
 # ── Create resource group ───────────────────────────────────────────────────────
 
-Write-Host "[2/5] Creating resource group '$ResourceGroup'..." -ForegroundColor Yellow
+Write-Host "[2/7] Creating resource group '$ResourceGroup'..." -ForegroundColor Yellow
 az group create --name $ResourceGroup --location $Location --output none --only-show-errors
 Write-Host "      Resource group ready." -ForegroundColor Green
 
 # ── Ensure Network Watcher exists ───────────────────────────────────────────────
 
-Write-Host "[3/5] Ensuring Network Watcher exists in '$Location'..." -ForegroundColor Yellow
+Write-Host "[3/7] Ensuring Network Watcher exists in '$Location'..." -ForegroundColor Yellow
 az network watcher configure `
     --resource-group NetworkWatcherRG `
     --locations $Location `
@@ -137,17 +139,15 @@ Write-Host "      Network Watcher confirmed." -ForegroundColor Green
 
 # ── Deploy Bicep template ──────────────────────────────────────────────────────
 
-Write-Host "[4/5] Deploying infrastructure (this will take several minutes)..." -ForegroundColor Yellow
+Write-Host "[4/7] Deploying infrastructure (this will take several minutes)..." -ForegroundColor Yellow
 $deployResult = az deployment group create `
     --resource-group $ResourceGroup `
     --template-file $templateFile `
     --parameters `
         location=$Location `
         prefix=$Prefix `
-        vmAdminPassword=$vmPwd `
         sqlEntraAdminObjectId=$SqlEntraAdminObjectId `
         sqlEntraAdminName=$SqlEntraAdminName `
-        deploySessionHosts=$($DeploySessionHosts.ToString().ToLower()) `
     --output json --only-show-errors
 
 if ($LASTEXITCODE -ne 0) {
@@ -175,9 +175,97 @@ Write-Host "║  AVD Pool B      : $($outputs.avdHostPoolBName.value)" -Foregrou
 Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
 
+# ── Deploy session host VMs (separate step — token is retrieved via CLI) ────────
+
+$sessionHostTemplate = Join-Path $scriptDir "infra" "modules" "avd-sessionhost.bicep"
+
+if ($deploySessionHosts) {
+    Write-Host "[5/7] Deploying AVD session host VMs..." -ForegroundColor Yellow
+    Write-Host "      ⏳ This step provisions VMs, installs Entra ID join and the AVD agent." -ForegroundColor DarkYellow
+    Write-Host "      ⏳ Expect ~10-15 minutes. Both VMs deploy in parallel." -ForegroundColor DarkYellow
+
+    $hostPools = @(
+        @{ Label = 'A'; HpName = $outputs.avdHostPoolAName.value; SubnetId = $outputs.avdSubnetAId.value; VmName = "$Prefix-vm-a" },
+        @{ Label = 'B'; HpName = $outputs.avdHostPoolBName.value; SubnetId = $outputs.avdSubnetBId.value; VmName = "$Prefix-vm-b" }
+    )
+
+    # Retrieve tokens and kick off deployments in parallel (--no-wait)
+    $deploymentsToWait = @()
+
+    foreach ($hp in $hostPools) {
+        # Check if VM already exists (idempotency)
+        $existingVm = az vm show --resource-group $ResourceGroup --name $hp.VmName --query id -o tsv 2>$null
+        if ($existingVm) {
+            Write-Host "      Session host $($hp.VmName) already exists — skipping." -ForegroundColor Yellow
+            continue
+        }
+
+        Write-Host "      Retrieving registration token for $($hp.HpName)..." -ForegroundColor Gray
+        $tokenJson = az desktopvirtualization hostpool retrieve-registration-token `
+            --name $hp.HpName `
+            --resource-group $ResourceGroup `
+            --output json --only-show-errors
+        $regToken = ($tokenJson | ConvertFrom-Json).token
+
+        if ([string]::IsNullOrEmpty($regToken)) {
+            Write-Error "Failed to retrieve registration token for $($hp.HpName)."
+            exit 1
+        }
+
+        $deployName = "sessionHost$($hp.Label)"
+        Write-Host "      Launching deployment '$deployName' for $($hp.VmName)..." -ForegroundColor Gray
+        az deployment group create `
+            --resource-group $ResourceGroup `
+            --template-file $sessionHostTemplate `
+            --name $deployName `
+            --no-wait `
+            --parameters `
+                name=$($hp.VmName) `
+                location=$Location `
+                subnetId=$($hp.SubnetId) `
+                vmSize='Standard_D2s_v5' `
+                adminUsername='azureuser' `
+                adminPassword=$vmPwd `
+                hostPoolName=$($hp.HpName) `
+                registrationToken=$regToken `
+            --output none --only-show-errors
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to start deployment for $($hp.VmName)."
+            exit 1
+        }
+        $deploymentsToWait += $deployName
+    }
+
+    # Wait for all parallel deployments to complete
+    if ($deploymentsToWait.Count -gt 0) {
+        Write-Host "      Waiting for $($deploymentsToWait.Count) deployment(s) to complete..." -ForegroundColor Gray
+        foreach ($depName in $deploymentsToWait) {
+            az deployment group wait `
+                --resource-group $ResourceGroup `
+                --name $depName `
+                --created --only-show-errors 2>$null
+
+            $depResult = az deployment group show `
+                --resource-group $ResourceGroup `
+                --name $depName `
+                --query properties.provisioningState -o tsv --only-show-errors 2>$null
+
+            if ($depResult -eq 'Succeeded') {
+                Write-Host "      ✅ $depName completed successfully." -ForegroundColor Green
+            } else {
+                Write-Error "Deployment '$depName' finished with state: $depResult. Check the Azure portal for details."
+                exit 1
+            }
+        }
+    }
+} else {
+    Write-Host "[5/7] Skipping session host VMs (use without -SkipSessionHosts to deploy)." -ForegroundColor Yellow
+}
+
 # ── Configure AVD access for current user ───────────────────────────────────────
 
-Write-Host "[5/5] Configuring AVD access for $userDisplayName..." -ForegroundColor Yellow
+Write-Host "[6/7] Configuring AVD access for $userDisplayName..." -ForegroundColor Yellow
 
 $subscriptionId = az account show --query id -o tsv --only-show-errors
 $rgScope = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroup"
@@ -190,34 +278,27 @@ az role assignment create `
     --scope $rgScope `
     --output none --only-show-errors 2>$null
 
-# Assign "Desktop Virtualization User" on each application group
-$appGroupNames = @(
-    "$($outputs.avdHostPoolAName.value)-dag",
-    "$($outputs.avdHostPoolBName.value)-dag"
+# Assign "Desktop Virtualization User" on each application group (using Bicep output IDs)
+$appGroups = @(
+    @{ Name = $outputs.avdHostPoolAName.value + '-dag'; Id = $outputs.avdAppGroupAId.value },
+    @{ Name = $outputs.avdHostPoolBName.value + '-dag'; Id = $outputs.avdAppGroupBId.value }
 )
 
-foreach ($ag in $appGroupNames) {
-    $agId = az desktopvirtualization applicationgroup show `
-        --name $ag `
-        --resource-group $ResourceGroup `
-        --query id -o tsv --only-show-errors 2>$null
-
-    if ($agId) {
-        Write-Host "      Assigning 'Desktop Virtualization User' on $ag..." -ForegroundColor Yellow
-        az role assignment create `
-            --assignee $userObjectId `
-            --role "Desktop Virtualization User" `
-            --scope $agId `
-            --output none --only-show-errors 2>$null
-    } else {
-        Write-Host "      WARNING: Could not find app group '$ag' — assign manually." -ForegroundColor DarkYellow
-    }
+foreach ($ag in $appGroups) {
+    Write-Host "      Assigning 'Desktop Virtualization User' on $($ag.Name)..." -ForegroundColor Yellow
+    az role assignment create `
+        --assignee $userObjectId `
+        --role "Desktop Virtualization User" `
+        --scope $($ag.Id) `
+        --output none --only-show-errors 2>$null
 }
 
 Write-Host "      AVD access configured." -ForegroundColor Green
 Write-Host ""
 
 # ── AVD connection instructions ─────────────────────────────────────────────────
+
+Write-Host "[7/7] Done!" -ForegroundColor Yellow
 
 Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Magenta
 Write-Host "║  How to connect to AVD                           ║" -ForegroundColor Magenta

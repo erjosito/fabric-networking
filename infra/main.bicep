@@ -17,19 +17,6 @@ param prefix string = 'fabnet'
 @description('Base time for AVD registration token expiry (do not override manually)')
 param baseTime string = utcNow()
 
-@description('Whether to deploy AVD session host VMs (set to false on re-deploys to avoid DSC re-registration)')
-param deploySessionHosts bool = true
-
-@description('VM admin username')
-param vmAdminUsername string = 'azureuser'
-
-@secure()
-@description('VM admin password (only required when deploySessionHosts is true)')
-param vmAdminPassword string = ''
-
-@description('VM size for AVD session hosts')
-param vmSize string = 'Standard_D2s_v5'
-
 @description('Object ID of the Entra ID user or group to set as SQL Server admin')
 param sqlEntraAdminObjectId string
 
@@ -111,7 +98,6 @@ module avdHostPoolA 'modules/avd-hostpool.bicep' = {
     location: location
     friendlyName: 'Fabric Test Pool A'
     baseTime: baseTime
-    generateToken: deploySessionHosts
   }
 }
 
@@ -122,39 +108,13 @@ module avdHostPoolB 'modules/avd-hostpool.bicep' = {
     location: location
     friendlyName: 'Fabric Test Pool B'
     baseTime: baseTime
-    generateToken: deploySessionHosts
   }
 }
 
-// ── AVD Session Hosts (only on first deploy or when explicitly requested) ──────
-
-module avdSessionHostA 'modules/avd-sessionhost.bicep' = if (deploySessionHosts) {
-  name: 'avdSessionHostA'
-  params: {
-    name: '${prefix}-vm-a'
-    location: location
-    subnetId: vnetA.outputs.avdSubnetId
-    vmSize: vmSize
-    adminUsername: vmAdminUsername
-    adminPassword: vmAdminPassword
-    hostPoolName: avdHostPoolA.outputs.hostPoolName
-    registrationToken: avdHostPoolA.outputs.registrationToken
-  }
-}
-
-module avdSessionHostB 'modules/avd-sessionhost.bicep' = if (deploySessionHosts) {
-  name: 'avdSessionHostB'
-  params: {
-    name: '${prefix}-vm-b'
-    location: location
-    subnetId: vnetB.outputs.avdSubnetId
-    vmSize: vmSize
-    adminUsername: vmAdminUsername
-    adminPassword: vmAdminPassword
-    hostPoolName: avdHostPoolB.outputs.hostPoolName
-    registrationToken: avdHostPoolB.outputs.registrationToken
-  }
-}
+// ── AVD Session Hosts are deployed separately from the deploy script ────────
+// The registration token is a write-only property that cannot be read back
+// as a Bicep output. The script retrieves it via az CLI after this deployment
+// and then deploys avd-sessionhost.bicep for each pool.
 
 // ── Azure SQL ──────────────────────────────────────────────────────────────────
 
@@ -328,5 +288,9 @@ output sqlServerFqdn string = sql.outputs.serverFqdn
 output sqlDatabaseName string = sql.outputs.databaseName
 output vnetAId string = vnetA.outputs.id
 output vnetBId string = vnetB.outputs.id
+output avdSubnetAId string = vnetA.outputs.avdSubnetId
+output avdSubnetBId string = vnetB.outputs.avdSubnetId
 output avdHostPoolAName string = avdHostPoolA.outputs.hostPoolName
 output avdHostPoolBName string = avdHostPoolB.outputs.hostPoolName
+output avdAppGroupAId string = avdHostPoolA.outputs.appGroupId
+output avdAppGroupBId string = avdHostPoolB.outputs.appGroupId

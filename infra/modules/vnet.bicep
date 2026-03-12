@@ -13,6 +13,29 @@ param avdSubnetPrefix string
 @description('Private endpoint subnet address prefix')
 param peSubnetPrefix string
 
+// ── NAT Gateway (provides outbound internet for VMs) ─────────────────────────
+
+resource natPublicIp 'Microsoft.Network/publicIPAddresses@2024-03-01' = {
+  name: '${name}-nat-pip'
+  location: location
+  sku: { name: 'Standard' }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+resource natGateway 'Microsoft.Network/natGateways@2024-03-01' = {
+  name: '${name}-nat'
+  location: location
+  sku: { name: 'Standard' }
+  properties: {
+    idleTimeoutInMinutes: 4
+    publicIpAddresses: [{ id: natPublicIp.id }]
+  }
+}
+
+// ── VNet ──────────────────────────────────────────────────────────────────────
+
 resource vnet 'Microsoft.Network/virtualNetworks@2024-03-01' = {
   name: name
   location: location
@@ -25,6 +48,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-03-01' = {
         name: 'snet-avd'
         properties: {
           addressPrefix: avdSubnetPrefix
+          natGateway: { id: natGateway.id }
         }
       }
       {

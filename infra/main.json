@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "3673693794485459973"
+      "templateHash": "1828969071216405356"
     }
   },
   "parameters": {
@@ -28,34 +28,6 @@
       "defaultValue": "[utcNow()]",
       "metadata": {
         "description": "Base time for AVD registration token expiry (do not override manually)"
-      }
-    },
-    "deploySessionHosts": {
-      "type": "bool",
-      "defaultValue": true,
-      "metadata": {
-        "description": "Whether to deploy AVD session host VMs (set to false on re-deploys to avoid DSC re-registration)"
-      }
-    },
-    "vmAdminUsername": {
-      "type": "string",
-      "defaultValue": "azureuser",
-      "metadata": {
-        "description": "VM admin username"
-      }
-    },
-    "vmAdminPassword": {
-      "type": "securestring",
-      "defaultValue": "",
-      "metadata": {
-        "description": "VM admin password (only required when deploySessionHosts is true)"
-      }
-    },
-    "vmSize": {
-      "type": "string",
-      "defaultValue": "Standard_D2s_v5",
-      "metadata": {
-        "description": "VM size for AVD session hosts"
       }
     },
     "sqlEntraAdminObjectId": {
@@ -569,7 +541,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "16804510441397516097"
+              "templateHash": "5520877963740382496"
             }
           },
           "parameters": {
@@ -606,6 +578,38 @@
           },
           "resources": [
             {
+              "type": "Microsoft.Network/publicIPAddresses",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}-nat-pip', parameters('name'))]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "publicIPAllocationMethod": "Static"
+              }
+            },
+            {
+              "type": "Microsoft.Network/natGateways",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}-nat', parameters('name'))]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "idleTimeoutInMinutes": 4,
+                "publicIpAddresses": [
+                  {
+                    "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('{0}-nat-pip', parameters('name')))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses', format('{0}-nat-pip', parameters('name')))]"
+              ]
+            },
+            {
               "type": "Microsoft.Network/virtualNetworks",
               "apiVersion": "2024-03-01",
               "name": "[parameters('name')]",
@@ -620,7 +624,10 @@
                   {
                     "name": "snet-avd",
                     "properties": {
-                      "addressPrefix": "[parameters('avdSubnetPrefix')]"
+                      "addressPrefix": "[parameters('avdSubnetPrefix')]",
+                      "natGateway": {
+                        "id": "[resourceId('Microsoft.Network/natGateways', format('{0}-nat', parameters('name')))]"
+                      }
                     }
                   },
                   {
@@ -631,7 +638,10 @@
                     }
                   }
                 ]
-              }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/natGateways', format('{0}-nat', parameters('name')))]"
+              ]
             }
           ],
           "outputs": {
@@ -688,7 +698,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "16804510441397516097"
+              "templateHash": "5520877963740382496"
             }
           },
           "parameters": {
@@ -725,6 +735,38 @@
           },
           "resources": [
             {
+              "type": "Microsoft.Network/publicIPAddresses",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}-nat-pip', parameters('name'))]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "publicIPAllocationMethod": "Static"
+              }
+            },
+            {
+              "type": "Microsoft.Network/natGateways",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}-nat', parameters('name'))]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "idleTimeoutInMinutes": 4,
+                "publicIpAddresses": [
+                  {
+                    "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('{0}-nat-pip', parameters('name')))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses', format('{0}-nat-pip', parameters('name')))]"
+              ]
+            },
+            {
               "type": "Microsoft.Network/virtualNetworks",
               "apiVersion": "2024-03-01",
               "name": "[parameters('name')]",
@@ -739,7 +781,10 @@
                   {
                     "name": "snet-avd",
                     "properties": {
-                      "addressPrefix": "[parameters('avdSubnetPrefix')]"
+                      "addressPrefix": "[parameters('avdSubnetPrefix')]",
+                      "natGateway": {
+                        "id": "[resourceId('Microsoft.Network/natGateways', format('{0}-nat', parameters('name')))]"
+                      }
                     }
                   },
                   {
@@ -750,7 +795,10 @@
                     }
                   }
                 ]
-              }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/natGateways', format('{0}-nat', parameters('name')))]"
+              ]
             }
           ],
           "outputs": {
@@ -795,9 +843,6 @@
           },
           "baseTime": {
             "value": "[parameters('baseTime')]"
-          },
-          "generateToken": {
-            "value": "[parameters('deploySessionHosts')]"
           }
         },
         "template": {
@@ -807,7 +852,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "9357273871524811095"
+              "templateHash": "5817031882364501518"
             }
           },
           "parameters": {
@@ -834,13 +879,6 @@
               "metadata": {
                 "description": "Base time for registration token expiry — pass utcNow() from parent template"
               }
-            },
-            "generateToken": {
-              "type": "bool",
-              "defaultValue": true,
-              "metadata": {
-                "description": "Whether to generate a new registration token (only needed when adding session hosts)"
-              }
             }
           },
           "resources": [
@@ -855,7 +893,10 @@
                 "personalDesktopAssignmentType": "Automatic",
                 "preferredAppGroupType": "Desktop",
                 "friendlyName": "[parameters('friendlyName')]",
-                "registrationInfo": "[if(parameters('generateToken'), createObject('expirationTime', dateTimeAdd(parameters('baseTime'), 'PT48H'), 'registrationTokenOperation', 'Update'), createObject('registrationTokenOperation', 'None'))]"
+                "registrationInfo": {
+                  "expirationTime": "[dateTimeAdd(parameters('baseTime'), 'PT48H')]",
+                  "registrationTokenOperation": "Update"
+                }
               }
             },
             {
@@ -897,9 +938,13 @@
               "type": "string",
               "value": "[resourceId('Microsoft.DesktopVirtualization/hostPools', parameters('name'))]"
             },
-            "registrationToken": {
+            "appGroupName": {
               "type": "string",
-              "value": "[if(parameters('generateToken'), reference(resourceId('Microsoft.DesktopVirtualization/hostPools', parameters('name')), '2024-04-03').registrationInfo.token, '')]"
+              "value": "[format('{0}-dag', parameters('name'))]"
+            },
+            "appGroupId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.DesktopVirtualization/applicationGroups', format('{0}-dag', parameters('name')))]"
             }
           }
         }
@@ -926,9 +971,6 @@
           },
           "baseTime": {
             "value": "[parameters('baseTime')]"
-          },
-          "generateToken": {
-            "value": "[parameters('deploySessionHosts')]"
           }
         },
         "template": {
@@ -938,7 +980,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "9357273871524811095"
+              "templateHash": "5817031882364501518"
             }
           },
           "parameters": {
@@ -965,13 +1007,6 @@
               "metadata": {
                 "description": "Base time for registration token expiry — pass utcNow() from parent template"
               }
-            },
-            "generateToken": {
-              "type": "bool",
-              "defaultValue": true,
-              "metadata": {
-                "description": "Whether to generate a new registration token (only needed when adding session hosts)"
-              }
             }
           },
           "resources": [
@@ -986,7 +1021,10 @@
                 "personalDesktopAssignmentType": "Automatic",
                 "preferredAppGroupType": "Desktop",
                 "friendlyName": "[parameters('friendlyName')]",
-                "registrationInfo": "[if(parameters('generateToken'), createObject('expirationTime', dateTimeAdd(parameters('baseTime'), 'PT48H'), 'registrationTokenOperation', 'Update'), createObject('registrationTokenOperation', 'None'))]"
+                "registrationInfo": {
+                  "expirationTime": "[dateTimeAdd(parameters('baseTime'), 'PT48H')]",
+                  "registrationTokenOperation": "Update"
+                }
               }
             },
             {
@@ -1028,471 +1066,17 @@
               "type": "string",
               "value": "[resourceId('Microsoft.DesktopVirtualization/hostPools', parameters('name'))]"
             },
-            "registrationToken": {
+            "appGroupName": {
               "type": "string",
-              "value": "[if(parameters('generateToken'), reference(resourceId('Microsoft.DesktopVirtualization/hostPools', parameters('name')), '2024-04-03').registrationInfo.token, '')]"
+              "value": "[format('{0}-dag', parameters('name'))]"
+            },
+            "appGroupId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.DesktopVirtualization/applicationGroups', format('{0}-dag', parameters('name')))]"
             }
           }
         }
       }
-    },
-    {
-      "condition": "[parameters('deploySessionHosts')]",
-      "type": "Microsoft.Resources/deployments",
-      "apiVersion": "2025-04-01",
-      "name": "avdSessionHostA",
-      "properties": {
-        "expressionEvaluationOptions": {
-          "scope": "inner"
-        },
-        "mode": "Incremental",
-        "parameters": {
-          "name": {
-            "value": "[format('{0}-vm-a', parameters('prefix'))]"
-          },
-          "location": {
-            "value": "[parameters('location')]"
-          },
-          "subnetId": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'vnetA'), '2025-04-01').outputs.avdSubnetId.value]"
-          },
-          "vmSize": {
-            "value": "[parameters('vmSize')]"
-          },
-          "adminUsername": {
-            "value": "[parameters('vmAdminUsername')]"
-          },
-          "adminPassword": {
-            "value": "[parameters('vmAdminPassword')]"
-          },
-          "hostPoolName": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolA'), '2025-04-01').outputs.hostPoolName.value]"
-          },
-          "registrationToken": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolA'), '2025-04-01').outputs.registrationToken.value]"
-          }
-        },
-        "template": {
-          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-          "contentVersion": "1.0.0.0",
-          "metadata": {
-            "_generator": {
-              "name": "bicep",
-              "version": "0.41.2.15936",
-              "templateHash": "8096847327093414392"
-            }
-          },
-          "parameters": {
-            "name": {
-              "type": "string",
-              "metadata": {
-                "description": "VM name (also used as computer name, truncated to 15 chars)"
-              }
-            },
-            "location": {
-              "type": "string",
-              "metadata": {
-                "description": "Azure region"
-              }
-            },
-            "subnetId": {
-              "type": "string",
-              "metadata": {
-                "description": "Subnet resource ID for the NIC"
-              }
-            },
-            "vmSize": {
-              "type": "string",
-              "metadata": {
-                "description": "VM size"
-              }
-            },
-            "adminUsername": {
-              "type": "string",
-              "metadata": {
-                "description": "Local admin username"
-              }
-            },
-            "adminPassword": {
-              "type": "securestring",
-              "metadata": {
-                "description": "Local admin password"
-              }
-            },
-            "hostPoolName": {
-              "type": "string",
-              "metadata": {
-                "description": "AVD host pool name to register with"
-              }
-            },
-            "registrationToken": {
-              "type": "securestring",
-              "metadata": {
-                "description": "AVD host pool registration token"
-              }
-            },
-            "artifactsLocation": {
-              "type": "string",
-              "defaultValue": "https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration_09-08-2022.zip",
-              "metadata": {
-                "description": "URL to the AVD agent DSC configuration zip"
-              }
-            }
-          },
-          "resources": [
-            {
-              "type": "Microsoft.Network/networkInterfaces",
-              "apiVersion": "2024-03-01",
-              "name": "[format('{0}-nic', parameters('name'))]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "ipConfigurations": [
-                  {
-                    "name": "ipconfig1",
-                    "properties": {
-                      "subnet": {
-                        "id": "[parameters('subnetId')]"
-                      },
-                      "privateIPAllocationMethod": "Dynamic"
-                    }
-                  }
-                ]
-              }
-            },
-            {
-              "type": "Microsoft.Compute/virtualMachines",
-              "apiVersion": "2024-03-01",
-              "name": "[parameters('name')]",
-              "location": "[parameters('location')]",
-              "identity": {
-                "type": "SystemAssigned"
-              },
-              "properties": {
-                "hardwareProfile": {
-                  "vmSize": "[parameters('vmSize')]"
-                },
-                "osProfile": {
-                  "computerName": "[take(parameters('name'), 15)]",
-                  "adminUsername": "[parameters('adminUsername')]",
-                  "adminPassword": "[parameters('adminPassword')]"
-                },
-                "storageProfile": {
-                  "imageReference": {
-                    "publisher": "MicrosoftWindowsDesktop",
-                    "offer": "windows-11",
-                    "sku": "win11-24h2-avd",
-                    "version": "latest"
-                  },
-                  "osDisk": {
-                    "createOption": "FromImage",
-                    "managedDisk": {
-                      "storageAccountType": "StandardSSD_LRS"
-                    }
-                  }
-                },
-                "networkProfile": {
-                  "networkInterfaces": [
-                    {
-                      "id": "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', parameters('name')))]"
-                    }
-                  ]
-                },
-                "licenseType": "Windows_Client"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', parameters('name')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Compute/virtualMachines/extensions",
-              "apiVersion": "2024-03-01",
-              "name": "[format('{0}/{1}', parameters('name'), 'AADLoginForWindows')]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "publisher": "Microsoft.Azure.ActiveDirectory",
-                "type": "AADLoginForWindows",
-                "typeHandlerVersion": "2.0",
-                "autoUpgradeMinorVersion": true
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Compute/virtualMachines', parameters('name'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Compute/virtualMachines/extensions",
-              "apiVersion": "2024-03-01",
-              "name": "[format('{0}/{1}', parameters('name'), 'DSC')]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "publisher": "Microsoft.Powershell",
-                "type": "DSC",
-                "typeHandlerVersion": "2.73",
-                "autoUpgradeMinorVersion": true,
-                "settings": {
-                  "modulesUrl": "[parameters('artifactsLocation')]",
-                  "configurationFunction": "Configuration.ps1\\AddSessionHost",
-                  "properties": {
-                    "hostPoolName": "[parameters('hostPoolName')]",
-                    "aadJoin": true
-                  }
-                },
-                "protectedSettings": {
-                  "properties": {
-                    "registrationInfoToken": "[parameters('registrationToken')]"
-                  }
-                }
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Compute/virtualMachines/extensions', parameters('name'), 'AADLoginForWindows')]",
-                "[resourceId('Microsoft.Compute/virtualMachines', parameters('name'))]"
-              ]
-            }
-          ],
-          "outputs": {
-            "vmId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Compute/virtualMachines', parameters('name'))]"
-            },
-            "vmName": {
-              "type": "string",
-              "value": "[parameters('name')]"
-            }
-          }
-        }
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'avdHostPoolA')]",
-        "[resourceId('Microsoft.Resources/deployments', 'vnetA')]"
-      ]
-    },
-    {
-      "condition": "[parameters('deploySessionHosts')]",
-      "type": "Microsoft.Resources/deployments",
-      "apiVersion": "2025-04-01",
-      "name": "avdSessionHostB",
-      "properties": {
-        "expressionEvaluationOptions": {
-          "scope": "inner"
-        },
-        "mode": "Incremental",
-        "parameters": {
-          "name": {
-            "value": "[format('{0}-vm-b', parameters('prefix'))]"
-          },
-          "location": {
-            "value": "[parameters('location')]"
-          },
-          "subnetId": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'vnetB'), '2025-04-01').outputs.avdSubnetId.value]"
-          },
-          "vmSize": {
-            "value": "[parameters('vmSize')]"
-          },
-          "adminUsername": {
-            "value": "[parameters('vmAdminUsername')]"
-          },
-          "adminPassword": {
-            "value": "[parameters('vmAdminPassword')]"
-          },
-          "hostPoolName": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolB'), '2025-04-01').outputs.hostPoolName.value]"
-          },
-          "registrationToken": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolB'), '2025-04-01').outputs.registrationToken.value]"
-          }
-        },
-        "template": {
-          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-          "contentVersion": "1.0.0.0",
-          "metadata": {
-            "_generator": {
-              "name": "bicep",
-              "version": "0.41.2.15936",
-              "templateHash": "8096847327093414392"
-            }
-          },
-          "parameters": {
-            "name": {
-              "type": "string",
-              "metadata": {
-                "description": "VM name (also used as computer name, truncated to 15 chars)"
-              }
-            },
-            "location": {
-              "type": "string",
-              "metadata": {
-                "description": "Azure region"
-              }
-            },
-            "subnetId": {
-              "type": "string",
-              "metadata": {
-                "description": "Subnet resource ID for the NIC"
-              }
-            },
-            "vmSize": {
-              "type": "string",
-              "metadata": {
-                "description": "VM size"
-              }
-            },
-            "adminUsername": {
-              "type": "string",
-              "metadata": {
-                "description": "Local admin username"
-              }
-            },
-            "adminPassword": {
-              "type": "securestring",
-              "metadata": {
-                "description": "Local admin password"
-              }
-            },
-            "hostPoolName": {
-              "type": "string",
-              "metadata": {
-                "description": "AVD host pool name to register with"
-              }
-            },
-            "registrationToken": {
-              "type": "securestring",
-              "metadata": {
-                "description": "AVD host pool registration token"
-              }
-            },
-            "artifactsLocation": {
-              "type": "string",
-              "defaultValue": "https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration_09-08-2022.zip",
-              "metadata": {
-                "description": "URL to the AVD agent DSC configuration zip"
-              }
-            }
-          },
-          "resources": [
-            {
-              "type": "Microsoft.Network/networkInterfaces",
-              "apiVersion": "2024-03-01",
-              "name": "[format('{0}-nic', parameters('name'))]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "ipConfigurations": [
-                  {
-                    "name": "ipconfig1",
-                    "properties": {
-                      "subnet": {
-                        "id": "[parameters('subnetId')]"
-                      },
-                      "privateIPAllocationMethod": "Dynamic"
-                    }
-                  }
-                ]
-              }
-            },
-            {
-              "type": "Microsoft.Compute/virtualMachines",
-              "apiVersion": "2024-03-01",
-              "name": "[parameters('name')]",
-              "location": "[parameters('location')]",
-              "identity": {
-                "type": "SystemAssigned"
-              },
-              "properties": {
-                "hardwareProfile": {
-                  "vmSize": "[parameters('vmSize')]"
-                },
-                "osProfile": {
-                  "computerName": "[take(parameters('name'), 15)]",
-                  "adminUsername": "[parameters('adminUsername')]",
-                  "adminPassword": "[parameters('adminPassword')]"
-                },
-                "storageProfile": {
-                  "imageReference": {
-                    "publisher": "MicrosoftWindowsDesktop",
-                    "offer": "windows-11",
-                    "sku": "win11-24h2-avd",
-                    "version": "latest"
-                  },
-                  "osDisk": {
-                    "createOption": "FromImage",
-                    "managedDisk": {
-                      "storageAccountType": "StandardSSD_LRS"
-                    }
-                  }
-                },
-                "networkProfile": {
-                  "networkInterfaces": [
-                    {
-                      "id": "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', parameters('name')))]"
-                    }
-                  ]
-                },
-                "licenseType": "Windows_Client"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', parameters('name')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Compute/virtualMachines/extensions",
-              "apiVersion": "2024-03-01",
-              "name": "[format('{0}/{1}', parameters('name'), 'AADLoginForWindows')]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "publisher": "Microsoft.Azure.ActiveDirectory",
-                "type": "AADLoginForWindows",
-                "typeHandlerVersion": "2.0",
-                "autoUpgradeMinorVersion": true
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Compute/virtualMachines', parameters('name'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Compute/virtualMachines/extensions",
-              "apiVersion": "2024-03-01",
-              "name": "[format('{0}/{1}', parameters('name'), 'DSC')]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "publisher": "Microsoft.Powershell",
-                "type": "DSC",
-                "typeHandlerVersion": "2.73",
-                "autoUpgradeMinorVersion": true,
-                "settings": {
-                  "modulesUrl": "[parameters('artifactsLocation')]",
-                  "configurationFunction": "Configuration.ps1\\AddSessionHost",
-                  "properties": {
-                    "hostPoolName": "[parameters('hostPoolName')]",
-                    "aadJoin": true
-                  }
-                },
-                "protectedSettings": {
-                  "properties": {
-                    "registrationInfoToken": "[parameters('registrationToken')]"
-                  }
-                }
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Compute/virtualMachines/extensions', parameters('name'), 'AADLoginForWindows')]",
-                "[resourceId('Microsoft.Compute/virtualMachines', parameters('name'))]"
-              ]
-            }
-          ],
-          "outputs": {
-            "vmId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Compute/virtualMachines', parameters('name'))]"
-            },
-            "vmName": {
-              "type": "string",
-              "value": "[parameters('name')]"
-            }
-          }
-        }
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'avdHostPoolB')]",
-        "[resourceId('Microsoft.Resources/deployments', 'vnetB')]"
-      ]
     },
     {
       "type": "Microsoft.Resources/deployments",
@@ -2704,6 +2288,14 @@
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'vnetB'), '2025-04-01').outputs.id.value]"
     },
+    "avdSubnetAId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'vnetA'), '2025-04-01').outputs.avdSubnetId.value]"
+    },
+    "avdSubnetBId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'vnetB'), '2025-04-01').outputs.avdSubnetId.value]"
+    },
     "avdHostPoolAName": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolA'), '2025-04-01').outputs.hostPoolName.value]"
@@ -2711,6 +2303,14 @@
     "avdHostPoolBName": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolB'), '2025-04-01').outputs.hostPoolName.value]"
+    },
+    "avdAppGroupAId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolA'), '2025-04-01').outputs.appGroupId.value]"
+    },
+    "avdAppGroupBId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'avdHostPoolB'), '2025-04-01').outputs.appGroupId.value]"
     }
   }
 }

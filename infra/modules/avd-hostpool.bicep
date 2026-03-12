@@ -10,9 +10,6 @@ param friendlyName string
 @description('Base time for registration token expiry — pass utcNow() from parent template')
 param baseTime string
 
-@description('Whether to generate a new registration token (only needed when adding session hosts)')
-param generateToken bool = true
-
 resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2024-04-03' = {
   name: name
   location: location
@@ -22,11 +19,11 @@ resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2024-04-03' = {
     personalDesktopAssignmentType: 'Automatic'
     preferredAppGroupType: 'Desktop'
     friendlyName: friendlyName
-    registrationInfo: generateToken ? {
+    // Always generate a fresh token. Existing session hosts ignore it —
+    // they only use the token during initial DSC registration.
+    registrationInfo: {
       expirationTime: dateTimeAdd(baseTime, 'PT48H')
       registrationTokenOperation: 'Update'
-    } : {
-      registrationTokenOperation: 'None'
     }
   }
 }
@@ -54,4 +51,5 @@ resource workspace 'Microsoft.DesktopVirtualization/workspaces@2024-04-03' = {
 
 output hostPoolName string = hostPool.name
 output hostPoolId string = hostPool.id
-output registrationToken string = generateToken ? hostPool.properties.registrationInfo.token : ''
+output appGroupName string = appGroup.name
+output appGroupId string = appGroup.id

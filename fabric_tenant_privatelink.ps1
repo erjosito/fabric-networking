@@ -163,13 +163,17 @@ az provider register --namespace Microsoft.PowerBI --only-show-errors | Out-Null
 
 # ── Preview ARM template ────────────────────────────────────────────────────────
 
+$vnetIdsJson     = ConvertTo-Json @($vnetAId, $vnetBId) -Compress
+$peSubnetIdsJson = ConvertTo-Json @($peSubnetAId, $peSubnetBId) -Compress
+
 Write-Host ""
 Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor DarkCyan
 Write-Host "║  ARM Template Preview (compiled from Bicep)      ║" -ForegroundColor DarkCyan
 Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor DarkCyan
 
 $armJson = az bicep build --file $templateFile --stdout 2>$null
-Write-Host $armJson -ForegroundColor DarkGray
+$armPretty = $armJson | ConvertFrom-Json | ConvertTo-Json -Depth 20
+Write-Host $armPretty -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "  Parameters that will be applied:" -ForegroundColor DarkCyan
@@ -184,19 +188,27 @@ Write-Host ""
 
 Write-Host "[4/4] Deploying Fabric tenant-level Private Link..." -ForegroundColor Yellow
 
-$vnetIdsJson     = ConvertTo-Json @($vnetAId, $vnetBId) -Compress
-$peSubnetIdsJson = ConvertTo-Json @($peSubnetAId, $peSubnetBId) -Compress
+$paramsObj = @{
+    '`$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'
+    contentVersion = '1.0.0.0'
+    parameters = @{
+        location    = @{ value = $Location }
+        prefix      = @{ value = $Prefix }
+        tenantId    = @{ value = $tenantId }
+        vnetIds     = @{ value = @($vnetAId, $vnetBId) }
+        peSubnetIds = @{ value = @($peSubnetAId, $peSubnetBId) }
+    }
+}
+$paramsFile = Join-Path ([System.IO.Path]::GetTempPath()) "fabric-tenant-pl-params.json"
+$paramsObj | ConvertTo-Json -Depth 5 | Set-Content -Path $paramsFile -Encoding UTF8
 
 $deployResult = az deployment group create `
     --resource-group $ResourceGroup `
     --template-file $templateFile `
-    --parameters `
-        location=$Location `
-        prefix=$Prefix `
-        tenantId=$tenantId `
-        vnetIds=$vnetIdsJson `
-        peSubnetIds=$peSubnetIdsJson `
+    --parameters "@$paramsFile" `
     --output json --only-show-errors
+
+Remove-Item -Path $paramsFile -ErrorAction SilentlyContinue
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Deployment failed. Check the Azure portal for details."
