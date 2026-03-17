@@ -26,10 +26,16 @@
     Name of the predefined query to run. Use -ListQueries to see all available
     names. Use "all" to run every query sequentially.
 
-.PARAMETER Timespan
-    Time range in ISO 8601 duration format.
-    Examples: PT1H (1 hour), PT6H (6 hours), P1D (1 day), P7D (7 days).
-    Default: P1D
+.PARAMETER TimeRange
+    Time range in ISO 8601 duration format. Default: P1D
+    Examples:
+      PT30M  — last 30 minutes
+      PT1H   — last 1 hour
+      PT6H   — last 6 hours
+      P1D    — last 1 day
+      P3D    — last 3 days
+      P7D    — last 7 days
+      P30D   — last 30 days
 
 .PARAMETER Top
     Limit the number of rows returned per query. Default: 100.
@@ -55,10 +61,10 @@
     into the Azure Portal).
 
 .EXAMPLE
-    .\get_logs.ps1 -Query nsp-access -Timespan PT6H
+    .\get_logs.ps1 -Query nsp-access -TimeRange PT6H
 
 .EXAMPLE
-    .\get_logs.ps1 -Query storage-blocked -Timespan P1D -ResourceFilter samplestgmauser
+    .\get_logs.ps1 -Query storage-blocked -TimeRange P1D -ResourceFilter samplestgmauser
 
 .EXAMPLE
     .\get_logs.ps1 -ListQueries
@@ -67,10 +73,10 @@
     .\get_logs.ps1 -Query vnet-flow-denied -ShowKQL
 
 .EXAMPLE
-    .\get_logs.ps1 -Query all -Timespan PT1H -Top 20
+    .\get_logs.ps1 -Query all -TimeRange PT1H -Top 20
 #>
 
-[CmdletBinding(DefaultParameterSetName = 'Run')]
+[CmdletBinding(DefaultParameterSetName = 'List')]
 param(
     [Parameter(ParameterSetName = 'Run')]
     [string]$WorkspaceId,
@@ -82,7 +88,7 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Show')]
     [ValidatePattern('^P(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?)?$')]
-    [string]$Timespan = 'P1D',
+    [string]$TimeRange = 'P1D',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Show')]
@@ -97,7 +103,7 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [string]$Prefix = 'fabnet',
 
-    [Parameter(Mandatory, ParameterSetName = 'List')]
+    [Parameter(ParameterSetName = 'List')]
     [switch]$ListQueries,
 
     [Parameter(Mandatory, ParameterSetName = 'Show')]
@@ -120,9 +126,8 @@ $queries["nsp-access"] = @{
     Category    = 'Network Security Perimeter'
     Description = 'All NSP access log entries — inbound and outbound with action'
     KQL         = 'NSPAccessLogs
-| project TimeGenerated, ResourceId, Direction, AccessRuleApplied,
-          SourceAddress, SourcePort, DestinationAddress, DestinationPort,
-          Protocol, Action, Profile, MatchedRule
+| project TimeGenerated, ResultDirection, ResultAction,
+          SourceIpAddress, OperationName, TrafficType, MatchedRule
 | sort by TimeGenerated desc'
 }
 
@@ -130,10 +135,9 @@ $queries["nsp-denied"] = @{
     Category    = 'Network Security Perimeter'
     Description = 'NSP requests that were DENIED — misconfigured rules or unexpected traffic'
     KQL         = 'NSPAccessLogs
-| where Action has_any ("Deny", "denied")
-| project TimeGenerated, ResourceId, Direction,
-          SourceAddress, DestinationAddress, DestinationPort,
-          Protocol, Action, MatchedRule, Profile
+| where ResultAction has_any ("Deny", "denied")
+| project TimeGenerated, ResultDirection, ResultAction,
+          SourceIpAddress, OperationName, TrafficType, MatchedRule
 | sort by TimeGenerated desc'
 }
 
@@ -141,9 +145,9 @@ $queries["nsp-by-resource"] = @{
     Category    = 'Network Security Perimeter'
     Description = 'NSP allow/deny counts per resource per hour'
     KQL         = 'NSPAccessLogs
-| summarize AllowCount = countif(Action has_any ("Allow", "allowed")),
-            DenyCount  = countif(Action has_any ("Deny", "denied"))
-  by ResourceId, Direction, bin(TimeGenerated, 1h)
+| summarize AllowCount = countif(ResultAction has_any ("Allow", "allowed")),
+            DenyCount  = countif(ResultAction has_any ("Deny", "denied"))
+  by ServiceResourceId, ResultDirection, TrafficType, bin(TimeGenerated, 1h)
 | sort by TimeGenerated desc'
 }
 
@@ -152,9 +156,8 @@ $queries["nsp-learning"] = @{
     Description = 'NSP Learning-mode events — traffic that WOULD be denied in enforced mode'
     KQL         = 'NSPAccessLogs
 | where Profile has "Learning" or Profile has "learning"
-| project TimeGenerated, ResourceId, Direction,
-          SourceAddress, DestinationAddress, DestinationPort,
-          Protocol, Action, MatchedRule, Profile
+| project TimeGenerated, ResultDirection, ResultAction,
+          SourceIpAddress, OperationName, TrafficType, MatchedRule
 | sort by TimeGenerated desc'
 }
 
@@ -165,9 +168,8 @@ $queries["storage-all"] = @{
     Category    = 'Azure Storage'
     Description = 'All Blob Storage operations — caller IP, auth type, status'
     KQL         = 'StorageBlobLogs
-| project TimeGenerated, AccountName, OperationName, StatusCode, StatusText,
-          CallerIpAddress, AuthenticationType, Uri, UserAgentHeader,
-          TlsVersion, ServerLatencyMs
+| project TimeGenerated, AccountName, OperationName,
+          StatusCode, CallerIpAddress, AuthenticationType, ObjectKey
 | sort by TimeGenerated desc'
 }
 
@@ -175,12 +177,12 @@ $queries["storage-blocked"] = @{
     Category    = 'Azure Storage'
     Description = 'Storage requests DENIED (403) — firewall, network rules, or auth failures'
     KQL         = 'StorageBlobLogs
-| where StatusCode == 403
+| where toint(StatusCode) == 403
     or StatusText has_any ("AuthorizationPermissionMismatch",
                            "AuthorizationFailure",
                            "NetworkRuleBlockedByDeny")
-| project TimeGenerated, AccountName, OperationName, StatusCode, StatusText,
-          CallerIpAddress, AuthenticationType, Uri, UserAgentHeader
+| project TimeGenerated, AccountName, OperationName,
+          StatusText, CallerIpAddress, RequesterUpn, ObjectKey
 | sort by TimeGenerated desc'
 }
 
@@ -194,8 +196,8 @@ $queries["storage-private-vs-public"] = @{
     CallerIpAddress == "", "ServiceInternal",
     "PublicInternet")
 | summarize RequestCount = count(),
-            AvgLatencyMs = round(avg(ServerLatencyMs), 1),
-            Errors       = countif(StatusCode >= 400)
+            AvgLatencyMs = round(avg(toreal(ServerLatencyMs)), 1),
+            Errors       = countif(toint(StatusCode) >= 400)
   by AccountName, AccessPath, AuthenticationType, bin(TimeGenerated, 1h)
 | sort by TimeGenerated desc'
 }
@@ -205,9 +207,9 @@ $queries["storage-operations"] = @{
     Description = 'Storage operation summary — error rates, latencies (P95)'
     KQL         = 'StorageBlobLogs
 | summarize TotalRequests  = count(),
-            FailedRequests = countif(StatusCode >= 400),
-            AvgLatencyMs   = round(avg(ServerLatencyMs), 1),
-            P95LatencyMs   = round(percentile(ServerLatencyMs, 95), 1)
+            FailedRequests = countif(toint(StatusCode) >= 400),
+            AvgLatencyMs   = round(avg(toreal(ServerLatencyMs)), 1),
+            P95LatencyMs   = round(percentile(toreal(ServerLatencyMs), 95), 1)
   by AccountName, OperationName, bin(TimeGenerated, 1h)
 | order by FailedRequests desc, TotalRequests desc'
 }
@@ -219,12 +221,10 @@ $queries["sql-connectivity"] = @{
     Category    = 'Azure SQL Database'
     Description = 'SQL connection events — successes and failures with client IP'
     KQL         = 'AzureDiagnostics
-| where ResourceProvider == "MICROSOFT.SQL"
+| where ResourceProvider contains "SQL"
 | where Category in ("SQLSecurityAuditEvents", "ConnectionEvents")
-| project TimeGenerated, Resource, ResourceGroup, Category,
-          event_class_s, action_name_s, succeeded_s,
-          client_ip_s, application_name_s, server_principal_name_s,
-          database_name_s, statement_s
+| project TimeGenerated, DatabaseName_s, Category,
+          OperationName, ResultType, clientIP_s, Message
 | sort by TimeGenerated desc'
 }
 
@@ -232,13 +232,11 @@ $queries["sql-failed"] = @{
     Category    = 'Azure SQL Database'
     Description = 'FAILED SQL connections — auth errors, network blocks, timeouts'
     KQL         = 'AzureDiagnostics
-| where ResourceProvider == "MICROSOFT.SQL"
+| where ResourceProvider contains "SQL"
 | where Category == "SQLSecurityAuditEvents"
-| where succeeded_s == "false" or action_name_s has_any ("FAILED", "BLOCK")
-| project TimeGenerated, Resource, database_name_s,
-          action_name_s, succeeded_s, client_ip_s,
-          application_name_s, server_principal_name_s,
-          additional_information_s, statement_s
+    or (Category == "Errors" and Severity >= 11)
+| project TimeGenerated, DatabaseName_s, Category,
+          OperationName, clientIP_s, error_number_d, Message
 | sort by TimeGenerated desc'
 }
 
@@ -246,12 +244,11 @@ $queries["sql-firewall"] = @{
     Category    = 'Azure SQL Database'
     Description = 'SQL firewall events — connections blocked by server/database firewall'
     KQL         = 'AzureDiagnostics
-| where ResourceProvider == "MICROSOFT.SQL"
-| where action_name_s has_any ("FIREWALL", "BLOCK", "DENY")
-    or (Category == "SQLSecurityAuditEvents" and statement_s has "firewall")
-| project TimeGenerated, Resource, database_name_s,
-          action_name_s, client_ip_s, application_name_s,
-          additional_information_s
+| where ResourceProvider contains "SQL"
+| where Message has_any ("firewall", "Firewall", "blocked", "BLOCK", "DENY")
+    or OperationName has_any ("FIREWALL", "BLOCK")
+| project TimeGenerated, DatabaseName_s,
+          OperationName, clientIP_s, Message
 | sort by TimeGenerated desc'
 }
 
@@ -259,24 +256,22 @@ $queries["sql-errors"] = @{
     Category    = 'Azure SQL Database'
     Description = 'SQL diagnostic errors — query failures, timeouts, deadlocks'
     KQL         = 'AzureDiagnostics
-| where ResourceProvider == "MICROSOFT.SQL"
+| where ResourceProvider contains "SQL"
 | where Category in ("Errors", "Timeouts", "Blocks", "Deadlocks")
-| project TimeGenerated, Resource, Category, database_name_s,
-          error_number_d, error_severity_d, error_state_d, error_message_s,
-          query_hash_s, query_plan_hash_s
+| project TimeGenerated, DatabaseName_s, Category,
+          OperationName, error_number_d, Severity, Message
 | sort by TimeGenerated desc'
 }
 
 $queries["sql-audit-summary"] = @{
     Category    = 'Azure SQL Database'
-    Description = 'SQL audit summary — action counts split by success/failure per hour'
+    Description = 'SQL audit summary — event counts by category and operation per hour'
     KQL         = 'AzureDiagnostics
-| where ResourceProvider == "MICROSOFT.SQL"
-| where Category == "SQLSecurityAuditEvents"
-| summarize SuccessCount = countif(succeeded_s == "true"),
-            FailureCount = countif(succeeded_s == "false")
-  by Resource, action_name_s, bin(TimeGenerated, 1h)
-| order by FailureCount desc, TimeGenerated desc'
+| where ResourceProvider contains "SQL"
+| summarize EventCount = count()
+  by LogicalServerName_s, DatabaseName_s, Category, OperationName,
+     bin(TimeGenerated, 1h)
+| order by EventCount desc, TimeGenerated desc'
 }
 
 
@@ -284,33 +279,72 @@ $queries["sql-audit-summary"] = @{
 
 $queries["vnet-flow-all"] = @{
     Category    = 'VNet Flow Logs'
-    Description = 'All VNet flow records — source, destination, ports, action'
-    KQL         = 'NTANetAnalytics
-| project TimeGenerated, FlowDirection, SrcIp, DestIp,
-          SrcPort, DestPort, L4Protocol, FlowStatus,
-          NSGRule, Subnet, VNet, AclGroup
+    Description = 'All VNet flow records with public IP enrichment'
+    KQL         = 'let IpInfo = NTAIpDetails
+    | project Ip, Location, PublicIpDetails;
+NTANetAnalytics
+| where SubType == "FlowLog"
+| extend SrcIp = iff(isempty(SrcIp), tostring(split(split(SrcPublicIps, " ")[0], "|")[0]), SrcIp)
+| extend DestIp = iff(isempty(DestIp), tostring(split(split(DestPublicIps, " ")[0], "|")[0]), DestIp)
+| lookup kind=leftouter IpInfo on $left.DestIp==$right.Ip
+| extend DestLocation = Location | project-away Location, PublicIpDetails
+| project TimeGenerated, FlowStatus, L4Protocol,
+          SrcIp, SrcSubnet, DestIp, DestPort, DestSubnet, DestLocation,
+          BytesSrcToDest, BytesDestToSrc, NsgRule
 | sort by TimeGenerated desc'
 }
 
 $queries["vnet-flow-denied"] = @{
     Category    = 'VNet Flow Logs'
-    Description = 'DENIED VNet flows — traffic blocked by NSG rules'
+    Description = 'Denied flows — blocked by NSG rules, with deny counters'
     KQL         = 'NTANetAnalytics
-| where FlowStatus in ("D", "Denied")
-| project TimeGenerated, FlowDirection, SrcIp, DestIp,
-          SrcPort, DestPort, L4Protocol, FlowStatus,
-          NSGRule, Subnet, VNet
-| sort by TimeGenerated desc'
+| where SubType == "FlowLog"
+| where DeniedInFlows > 0 or DeniedOutFlows > 0
+| extend SrcIp = iff(isempty(SrcIp), tostring(split(split(SrcPublicIps, " ")[0], "|")[0]), SrcIp)
+| extend DestIp = iff(isempty(DestIp), tostring(split(split(DestPublicIps, " ")[0], "|")[0]), DestIp)
+| summarize DeniedIn=sum(DeniedInFlows), DeniedOut=sum(DeniedOutFlows)
+  by SrcIp, DestIp, DestPort, L4Protocol, AclRule, NsgRule
+| extend TotalDenied = DeniedIn + DeniedOut
+| sort by TotalDenied desc'
+}
+
+$queries["vnet-flow-top"] = @{
+    Category    = 'VNet Flow Logs'
+    Description = 'Top talkers by bytes — enriched with geolocation'
+    KQL         = 'let IpInfo = NTAIpDetails
+    | project Ip, Location, PublicIpDetails;
+NTANetAnalytics
+| where SubType == "FlowLog"
+| extend SrcIp = iff(isempty(SrcIp), tostring(split(split(SrcPublicIps, " ")[0], "|")[0]), SrcIp)
+| extend DestIp = iff(isempty(DestIp), tostring(split(split(DestPublicIps, " ")[0], "|")[0]), DestIp)
+| lookup kind=leftouter IpInfo on $left.DestIp==$right.Ip
+| extend DestLocation = Location | project-away Location, PublicIpDetails
+| summarize FlowCount=count(),
+            TotalBytes=sum(BytesSrcToDest + BytesDestToSrc)
+  by SrcIp, DestIp, DestPort, L4Protocol, DestLocation
+| top 50 by TotalBytes desc'
+}
+
+$queries["vnet-flow-protocols"] = @{
+    Category    = 'VNet Flow Logs'
+    Description = 'Traffic by protocol and port — volume and flow counts'
+    KQL         = 'NTANetAnalytics
+| where SubType == "FlowLog"
+| summarize FlowCount=count(),
+            TotalBytes=sum(BytesSrcToDest + BytesDestToSrc)
+  by L4Protocol, DestPort
+| order by TotalBytes desc'
 }
 
 $queries["vnet-flow-sql"] = @{
     Category    = 'VNet Flow Logs'
     Description = 'Flows targeting SQL port 1433 — verify private endpoint connectivity'
     KQL         = 'NTANetAnalytics
+| where SubType == "FlowLog"
 | where DestPort == 1433
-| project TimeGenerated, FlowDirection, SrcIp, DestIp,
-          SrcPort, DestPort, L4Protocol, FlowStatus,
-          NSGRule, Subnet, VNet
+| project TimeGenerated, FlowStatus, SrcIp, SrcSubnet,
+          DestIp, DestPort, PrivateEndpointResourceId,
+          BytesSrcToDest, BytesDestToSrc
 | sort by TimeGenerated desc'
 }
 
@@ -318,21 +352,50 @@ $queries["vnet-flow-storage"] = @{
     Category    = 'VNet Flow Logs'
     Description = 'Flows targeting port 443 — verify blob private endpoint traffic'
     KQL         = 'NTANetAnalytics
+| where SubType == "FlowLog"
 | where DestPort == 443
-| project TimeGenerated, FlowDirection, SrcIp, DestIp,
-          SrcPort, DestPort, L4Protocol, FlowStatus,
-          NSGRule, Subnet, VNet
+| project TimeGenerated, FlowStatus, SrcIp, SrcSubnet,
+          DestIp, DestPort, PrivateEndpointResourceId,
+          BytesSrcToDest, BytesDestToSrc
 | sort by TimeGenerated desc'
+}
+
+$queries["vnet-flow-cross"] = @{
+    Category    = 'VNet Flow Logs'
+    Description = 'Cross-VNet traffic (VNet A 10.0.x ↔ VNet B 10.1.x)'
+    KQL         = 'NTANetAnalytics
+| where SubType == "FlowLog"
+| where (SrcIp startswith "10.0." and DestIp startswith "10.1.")
+     or (SrcIp startswith "10.1." and DestIp startswith "10.0.")
+| summarize FlowCount=count(),
+            BytesSent=sum(BytesSrcToDest),
+            BytesRecv=sum(BytesDestToSrc)
+  by SrcIp, DestIp, DestPort, L4Protocol
+| sort by FlowCount desc'
+}
+
+$queries["vnet-flow-private"] = @{
+    Category    = 'VNet Flow Logs'
+    Description = 'Private-to-private flows — PE subnet traffic and internal routing'
+    KQL         = 'NTANetAnalytics
+| where SubType == "FlowLog"
+| where isnotempty(SrcIp) and isnotempty(DestIp)
+| where ipv4_is_private(SrcIp) and ipv4_is_private(DestIp)
+| summarize FlowCount=count(),
+            TotalBytes=sum(BytesSrcToDest + BytesDestToSrc)
+  by SrcIp, SrcSubnet, DestIp, DestSubnet, DestPort, L4Protocol
+| sort by TotalBytes desc'
 }
 
 $queries["vnet-flow-summary"] = @{
     Category    = 'VNet Flow Logs'
     Description = 'Flow summary per subnet — allowed/denied counts and bytes (hourly)'
     KQL         = 'NTANetAnalytics
-| summarize AllowedFlows = countif(FlowStatus in ("A", "Allowed")),
-            DeniedFlows  = countif(FlowStatus in ("D", "Denied")),
+| where SubType == "FlowLog"
+| summarize AllowedFlows = sum(AllowedInFlows + AllowedOutFlows),
+            DeniedFlows  = sum(DeniedInFlows + DeniedOutFlows),
             TotalBytes   = sum(BytesSrcToDest + BytesDestToSrc)
-  by Subnet, VNet, FlowDirection, bin(TimeGenerated, 1h)
+  by SrcSubnet, DestSubnet, FlowDirection, bin(TimeGenerated, 1h)
 | sort by DeniedFlows desc, TimeGenerated desc'
 }
 
@@ -341,9 +404,10 @@ $queries["nsg-flow-legacy"] = @{
     Description = 'Legacy NSG flow logs (AzureNetworkAnalytics_CL) — use if NTANetAnalytics is empty'
     KQL         = 'AzureNetworkAnalytics_CL
 | where SubType_s == "FlowLog"
-| project TimeGenerated, FlowDirection_s, SrcIP_s, DestIP_s,
-          SrcPort_d, DestPort_d, L4Protocol_s, FlowStatus_s,
-          NSGRule_s, Subnet1_s, Subnet2_s
+| project TimeGenerated, FlowDirection_s, FlowStatus_s, L4Protocol_s,
+          SrcIP_s, SrcPort_d, Subnet1_s,
+          DestIP_s, DestPort_d, Subnet2_s,
+          NSGRule_s
 | sort by TimeGenerated desc'
 }
 
@@ -360,7 +424,7 @@ $queries["pe-connections"] = @{
     "privateEndpointConnections")
 | project TimeGenerated, OperationNameValue, ActivityStatusValue,
           ResourceGroup, Resource = _ResourceId,
-          Caller, CallerIpAddress, Properties
+          Caller, CallerIpAddress
 | sort by TimeGenerated desc'
 }
 
@@ -370,7 +434,8 @@ $queries["pe-dns"] = @{
     KQL         = 'AzureActivity
 | where OperationNameValue has "Microsoft.Network/privateDnsZones"
 | project TimeGenerated, OperationNameValue, ActivityStatusValue,
-          ResourceGroup, Resource = _ResourceId, Caller, Properties
+          ResourceGroup, Resource = _ResourceId,
+          Caller, CallerIpAddress
 | sort by TimeGenerated desc'
 }
 
@@ -478,7 +543,8 @@ $queries["pls-events"] = @{
     "Microsoft.PowerBI/privateLinkServicesForPowerBI",
     "Microsoft.Fabric/privateLinkServicesForFabric")
 | project TimeGenerated, OperationNameValue, ActivityStatusValue,
-          ResourceGroup, Resource = _ResourceId, Caller, Properties
+          ResourceGroup, Resource = _ResourceId,
+          Caller, CallerIpAddress
 | sort by TimeGenerated desc'
 }
 
@@ -494,7 +560,8 @@ $queries["gateway-operations"] = @{
     "Microsoft.PowerBI/dataGateways",
     "Microsoft.Network/connections")
 | project TimeGenerated, OperationNameValue, ActivityStatusValue,
-          ResourceGroup, Resource = _ResourceId, Caller, Properties
+          ResourceGroup, Resource = _ResourceId,
+          Caller, CallerIpAddress
 | sort by TimeGenerated desc'
 }
 
@@ -556,6 +623,15 @@ function Show-QueryList {
     Write-Host "-ShowKQL" -ForegroundColor Yellow -NoNewline
     Write-Host " prints the KQL without executing."
     Write-Host ""
+    Write-Host "  TimeRange examples (ISO 8601 duration):" -ForegroundColor Cyan
+    Write-Host "    PT30M  — last 30 minutes"
+    Write-Host "    PT1H   — last 1 hour"
+    Write-Host "    PT6H   — last 6 hours"
+    Write-Host "    P1D    — last 1 day (default)"
+    Write-Host "    P3D    — last 3 days"
+    Write-Host "    P7D    — last 7 days"
+    Write-Host "    P30D   — last 30 days"
+    Write-Host ""
 }
 
 function Resolve-WorkspaceId {
@@ -578,7 +654,7 @@ function Resolve-WorkspaceId {
 #  Main
 # ═══════════════════════════════════════════════════════════════════════════════
 
-if ($ListQueries) {
+if ($PSCmdlet.ParameterSetName -eq 'List') {
     Show-QueryList
     return
 }
@@ -609,12 +685,6 @@ if (-not $WorkspaceId) {
     if (-not $WorkspaceId) { return }
 }
 
-# Ensure the Az.OperationalInsights module is available
-if (-not (Get-Command Invoke-AzOperationalInsightsQuery -ErrorAction SilentlyContinue)) {
-    Write-Error "The Az.OperationalInsights module is required. Install with: Install-Module Az.OperationalInsights -Scope CurrentUser"
-    return
-}
-
 foreach ($qName in $queriesToRun) {
     $qDef = $queries[$qName]
     $kql  = $qDef.KQL
@@ -632,36 +702,56 @@ foreach ($qName in $queriesToRun) {
     Write-Host ""
     Write-Host "  +-- [$qName] $($qDef.Description)" -ForegroundColor Cyan
     Write-Host "  |  Category : $($qDef.Category)"
-    Write-Host "  |  Timespan : $Timespan    Top: $(if ($Top -gt 0) { $Top } else { 'unlimited' })"
+    Write-Host "  |  TimeRange: $TimeRange    Top: $(if ($Top -gt 0) { $Top } else { 'unlimited' })"
     if ($ResourceFilter) {
         Write-Host "  |  Filter   : $ResourceFilter" -ForegroundColor Yellow
     }
     Write-Host "  +----------------------------------------------" -ForegroundColor Cyan
 
-    try {
-        $result = Invoke-AzOperationalInsightsQuery `
-            -WorkspaceId $WorkspaceId `
-            -Query $kql `
-            -Timespan $Timespan `
-            -ErrorAction Stop
+    # Collapse multi-line KQL into a single line so az CLI passes it intact
+    # Replace double quotes with single quotes — KQL accepts both, and double
+    # quotes get stripped by the Windows command processor when passed to az CLI
+    $kqlOneLine = ($kql -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }) -join ' '
+    $kqlOneLine = $kqlOneLine -replace '"', "'"
 
-        if ($result.Results -and $result.Results.Count -gt 0) {
-            Write-Host "    $($result.Results.Count) row(s) returned" -ForegroundColor Green
-            $result.Results | Format-Table -AutoSize -Wrap
+    $queryArgs = @(
+        'monitor', 'log-analytics', 'query',
+        '--workspace', $WorkspaceId,
+        '--analytics-query', $kqlOneLine,
+        '--timespan', $TimeRange,
+        '-o', 'json'
+    )
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $raw = & az @queryArgs 2>&1
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAP
+
+    if ($exitCode -ne 0) {
+        $msg = ($raw | Out-String).Trim()
+        if ($msg -match 'BadArgumentError|SemanticError|is not recognized as a|not a valid table|could not be found') {
+            Write-Host '    ⚠ Table/column not available — diagnostics may not be configured for this resource.' -ForegroundColor DarkYellow
+            Write-Host "    $($msg.Substring(0, [Math]::Min($msg.Length, 200)))" -ForegroundColor DarkGray
         }
         else {
-            Write-Host "    No results for this time range." -ForegroundColor DarkGray
+            Write-Host "    ❌ Error: $($msg.Substring(0, [Math]::Min($msg.Length, 300)))" -ForegroundColor Red
         }
+        continue
     }
-    catch {
-        $msg = $_.Exception.Message
-        if ($msg -match 'BadArgumentError|SemanticError|is not recognized|not found') {
-            Write-Host '    Table not available - diagnostics may not be configured for this resource.' -ForegroundColor DarkYellow
-            Write-Host "    $msg" -ForegroundColor DarkGray
-        }
-        else {
-            Write-Host "    Error: $msg" -ForegroundColor Red
-        }
+
+    $rows = @($raw | ConvertFrom-Json)
+    # Flatten nested arrays from ConvertFrom-Json (it wraps [] as a single element)
+    if ($rows.Count -eq 1 -and $rows[0] -is [System.Collections.IEnumerable] -and $rows[0] -isnot [string]) {
+        $rows = @($rows[0])
+    }
+    if ($rows.Count -gt 0) {
+        Write-Host "    ✅ $($rows.Count) row(s) returned" -ForegroundColor Green
+        # Get column names excluding the API metadata column, force all to display
+        $cols = @($rows[0].PSObject.Properties.Name | Where-Object { $_ -ne 'TableName' })
+        $rows | Select-Object -Property $cols | Format-Table -AutoSize -Wrap
+    }
+    else {
+        Write-Host "    (no results for this time range)" -ForegroundColor DarkGray
     }
 }
 
